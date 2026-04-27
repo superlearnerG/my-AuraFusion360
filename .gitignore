@@ -1,0 +1,20 @@
+*.pyc
+.vscode
+output
+build
+data
+*.ply
+**/PKG-INFO
+# submodules
+**__pycache__**
+**.DS_Store**
+*.png
+*.tiff
+*.out
+eval
+*.npz
+**/tmp
+**/output
+**/data
+**/visualize_results
+**pretrained_models**

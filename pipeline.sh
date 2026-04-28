@@ -14,7 +14,7 @@ TARGET_IDS=""
 BASE_ITERATION=30000
 TRAIN_ITERATIONS=30000
 FIT_MASK_ITERATIONS=2000
-FINETUNE_ITERATION=10000
+FINETUNE_ITERATION=5000
 REMOVAL_THRESH=0.7
 REFERENCE_INDEX=0
 DILATE_MASK_KERNEL_SIZE=5
@@ -43,7 +43,7 @@ Options:
   --base_iteration N              Base checkpoint iteration used by iterative workflow. Default: 30000
   --train_iterations N            Initial Aura/3DGS training iterations. Default: 30000
   --fit_mask_iterations N         Per-round _is_masked fitting iterations. Default: 2000
-  --finetune_iteration N          Per-round final inpaint finetune iterations. Default: 10000
+  --finetune_iteration N          Per-round final inpaint finetune iterations. Default: 5000
   --removal_thresh V              Gaussian removal threshold. Default: 0.7
   --reference_index N             Reference view index for inpaint init. Default: 0
   --dilate_mask_kernel_size N     Unseen mask dilation kernel. Default: 5
@@ -378,5 +378,41 @@ echo "Outputs root: $MODEL_PATH/aura_iterative"
 #   --target_ids "[30,83,72,51],[40,62,105,94],[115,158,222,233],[169,180,126,142],[201,212,244,190]" \
 #   --removal_thresh 0.7 \
 #   --fit_mask_iterations 2000 \
-#   --finetune_iteration 10000 \
+#   --finetune_iteration 5000 \
 #   --skip_base_train
+
+# bash pipeline.sh \
+#   -s ../../siga26/data/bear \
+#   -m ../../siga26/output/bear/aurafusion360 \
+#   --raw_mask_dir ../../siga26/data/bear/object_mask \
+#   --target_ids "128" \
+#   --removal_thresh 0.7 \
+#   --fit_mask_iterations 2000 \
+#   --finetune_iteration 5000 
+
+# bash pipeline.sh \
+#   -s ../../siga26/data/bonsai \
+#   -m ../../siga26/output/bonsai/aurafusion360 \
+#   --raw_mask_dir ../../siga26/data/bonsai/object_mask \
+#   --target_ids "128" \
+#   --removal_thresh 0.7 \
+#   --fit_mask_iterations 2000 \
+#   --finetune_iteration 5000 
+
+# bash pipeline.sh \
+#   -s ../../siga26/data/fruits \
+#   -m ../../siga26/output/fruits/aurafusion360 \
+#   --raw_mask_dir ../../siga26/data/fruits/object_mask \
+#   --target_ids "[48,30,67,86,105,123,142],[161,180,217,198,236]" \
+#   --removal_thresh 0.7 \
+#   --fit_mask_iterations 2000 \
+#   --finetune_iteration 5000 
+
+# bash pipeline.sh \
+#   -s ../../siga26/data/doppelherz \
+#   -m ../../siga26/output/doppelherz/aurafusion360 \
+#   --raw_mask_dir ../../siga26/data/doppelherz/object_mask \
+#   --target_ids "[30,105,180]" \
+#   --removal_thresh 0.7 \
+#   --fit_mask_iterations 2000 \
+#   --finetune_iteration 5000 

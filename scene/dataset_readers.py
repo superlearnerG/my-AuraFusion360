@@ -10,6 +10,7 @@
 #
 
 import os
+import re
 import sys
 from PIL import Image
 from typing import NamedTuple
@@ -125,6 +126,85 @@ def _find_image_for_stem(directory, stem):
         if os.path.exists(candidate):
             return candidate
     return None
+
+def _resolve_image_path(directory, image_name):
+    if directory is None:
+        return None
+    image_name = os.path.basename(str(image_name))
+    direct_path = os.path.join(directory, image_name)
+    if os.path.exists(direct_path):
+        return direct_path
+    return _find_image_for_stem(directory, os.path.splitext(image_name)[0])
+
+def _split_entry_keys(text):
+    name = os.path.basename(text.strip())
+    if not name:
+        return set()
+    stem = os.path.splitext(name)[0]
+    return {name, stem}
+
+def _load_split_list(list_path):
+    entries = set()
+    with open(list_path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            item = line.strip()
+            if not item or item.startswith("#"):
+                continue
+            entries.update(_split_entry_keys(item))
+    return entries
+
+def _load_dataset_split(source_path):
+    train_list_path = os.path.join(source_path, "train_list.txt")
+    test_list_path = os.path.join(source_path, "test_list.txt")
+    has_train_list = os.path.exists(train_list_path)
+    has_test_list = os.path.exists(test_list_path)
+
+    if has_train_list and has_test_list:
+        train_entries = _load_split_list(train_list_path)
+        test_entries = _load_split_list(test_list_path)
+        overlap = train_entries.intersection(test_entries)
+        if overlap:
+            sample = ", ".join(sorted(overlap)[:5])
+            raise ValueError(f"train_list.txt and test_list.txt overlap: {sample}")
+        print(f"Using train/test split files: {train_list_path}, {test_list_path}")
+        return {
+            "mode": "list",
+            "train_entries": train_entries,
+            "test_entries": test_entries,
+        }
+
+    if has_train_list != has_test_list:
+        print("Only one of train_list.txt/test_list.txt was found; falling back to basename holdout split.")
+    return {
+        "mode": "holdout",
+        "train_entries": set(),
+        "test_entries": set(),
+    }
+
+def _basename_sequence_number(image_name):
+    stem = os.path.splitext(os.path.basename(image_name))[0]
+    match = re.search(r"\d+$", stem)
+    if match is None:
+        return None
+    return int(match.group(0))
+
+def _split_for_image(image_name, split_config, llffhold):
+    keys = _split_entry_keys(image_name)
+    if split_config["mode"] == "list":
+        in_train = bool(keys.intersection(split_config["train_entries"]))
+        in_test = bool(keys.intersection(split_config["test_entries"]))
+        if in_train and in_test:
+            raise ValueError(f"Image appears in both train and test splits: {image_name}")
+        if in_train:
+            return "train"
+        if in_test:
+            return "test"
+        return None
+
+    sequence_number = _basename_sequence_number(image_name)
+    if sequence_number is not None and sequence_number % llffhold == 0:
+        return "test"
+    return "train"
 
 def _mask_dir_for_stage(images_folder, stage, object_mask_dir=None, unseen_mask_dir=None, unseen_mask_dilated_dir=None):
     if stage in ["train", "removal"]:
@@ -423,10 +503,11 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
 
 
 def readColmapCamerasAura(
-    cam_extrinsics, cam_intrinsics, images_folder, stage, test_images_folder, object_mask_dir=None, unseen_mask_dir=None, unseen_mask_dilated_dir=None, reference_dir=None, use_reference_images=False
+    cam_extrinsics, cam_intrinsics, images_folder, stage, test_images_folder, object_mask_dir=None, unseen_mask_dir=None, unseen_mask_dilated_dir=None, reference_dir=None, use_reference_images=False, split_config=None, llffhold=8
 ):
     train_cam_infos = []
     test_cam_infos = []
+    split_config = split_config or {"mode": "holdout", "train_entries": set(), "test_entries": set()}
 
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
@@ -459,20 +540,15 @@ def readColmapCamerasAura(
                 False
             ), "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
 
-        train_image_path = os.path.join(images_folder, os.path.basename(extr.name))
-        test_image_path = os.path.join(test_images_folder, os.path.basename(extr.name))
-        # handle inpaint_images for inpaint stage
-        if stage == "inpaint":
-            for ext in IMAGE_EXTENSIONS:
-                train_image_path = os.path.join(images_folder, os.path.basename(extr.name).split(".")[0] + ext)
-                if os.path.exists(train_image_path):
-                    break
-            for ext in IMAGE_EXTENSIONS:
-                test_image_path = os.path.join(test_images_folder, os.path.basename(extr.name).split(".")[0] + ext)
-                if os.path.exists(test_image_path):
-                    break
-        # check if image exists in training image folder
-        if os.path.exists(train_image_path):
+        image_basename = os.path.basename(extr.name)
+        split = _split_for_image(image_basename, split_config, llffhold)
+        if split is None:
+            continue
+
+        train_image_path = _resolve_image_path(images_folder, image_basename)
+        test_image_path = _resolve_image_path(images_folder, image_basename) or _resolve_image_path(test_images_folder, image_basename)
+
+        if split == "train" and train_image_path is not None:
             image_path = train_image_path
             image_name = os.path.basename(image_path).split(".")[0]
             image = Image.open(image_path)
@@ -502,8 +578,7 @@ def readColmapCamerasAura(
                 height=height,
             )
             train_cam_infos.append(cam_info)
-        # check if image exists in testing image folder
-        elif os.path.exists(test_image_path):
+        elif split == "test" and test_image_path is not None:
             image_path = test_image_path
             image_name = os.path.basename(image_path).split(".")[0]
             image = Image.open(image_path)
@@ -524,7 +599,7 @@ def readColmapCamerasAura(
             test_cam_infos.append(cam_info)
         else:
             # raise ValueError(f"Image: {image_name} not found in train / test")
-            print(f"Image: {extr.name} not found in train / test")
+            print(f"Image: {extr.name} not found for {split} split")
             continue
 
     sys.stdout.write('\n')
@@ -545,6 +620,9 @@ def readColmapSceneInfoAura(path, images, eval, llffhold=8, stage="train", args=
 
     # load training images from {images}, and testing images from {test_images}
     reading_dir = "images" if images == None else images
+    split_config = _load_dataset_split(path)
+    if split_config["mode"] == "holdout":
+        print(f"Using basename holdout split: sequence_number % {llffhold} == 0 -> test")
     train_cam_infos_unsorted, test_cam_infos_unsorted = readColmapCamerasAura(
         cam_extrinsics=cam_extrinsics,
         cam_intrinsics=cam_intrinsics,
@@ -556,6 +634,8 @@ def readColmapSceneInfoAura(path, images, eval, llffhold=8, stage="train", args=
         unseen_mask_dilated_dir=getattr(args, "unseen_mask_dilated_dir", ""),
         reference_dir=getattr(args, "reference_dir", ""),
         use_reference_images=getattr(args, "use_reference_images", False),
+        split_config=split_config,
+        llffhold=llffhold,
     )
 
     train_cam_infos = sorted(

@@ -331,6 +331,21 @@ else
     --port "$PORT"
 fi
 
+echo "[$(date '+%F %T')] Rendering vanilla 3DGS test split for evaluation"
+"$PYTHON_BIN" render.py \
+  -s "$SOURCE_PATH" \
+  -m "$MODEL_PATH" \
+  --object_mask_dir "$RAW_MASK_DIR" \
+  --iteration "$BASE_ITERATION" \
+  --skip_train \
+  --skip_mesh
+
+echo "[$(date '+%F %T')] Evaluating vanilla 3DGS test split"
+"$PYTHON_BIN" scripts/evaluate_vanilla_3dgs.py \
+  -m "$MODEL_PATH" \
+  --iteration "$BASE_ITERATION" \
+  --output "$MODEL_PATH/evaluation_results.txt"
+
 ITERATIVE_ARGS=()
 if (( RENDER_INTERMEDIATE )); then
   ITERATIVE_ARGS+=(--render_intermediate)

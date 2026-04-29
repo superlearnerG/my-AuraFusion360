@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 from argparse import ArgumentParser
 from glob import glob
@@ -12,13 +13,116 @@ from tqdm import tqdm
 
 from utils.pretrained_paths import require_pretrained_file
 
+IMAGE_EXTENSIONS = {".jpg", ".JPG", ".jpeg", ".JPEG", ".png", ".PNG"}
+
 
 predictor = build_sam2_video_predictor(
     config_file="configs/sam2/sam2_hiera_l.yaml",
     ckpt_path=str(require_pretrained_file("sam2-hiera-large", "sam2_hiera_large.pt", min_bytes=1024 * 1024)),
 )
-    
-    
+
+
+def _image_paths(directory):
+    return sorted(
+        [
+            os.path.join(directory, name)
+            for name in os.listdir(directory)
+            if os.path.isfile(os.path.join(directory, name)) and os.path.splitext(name)[1] in IMAGE_EXTENSIONS
+        ],
+        key=lambda path: os.path.splitext(os.path.basename(path))[0],
+    )
+
+
+def _split_entry_keys(text):
+    name = os.path.basename(text.strip())
+    if not name:
+        return set()
+    stem = os.path.splitext(name)[0]
+    return {name, stem}
+
+
+def _load_split_list(list_path):
+    entries = set()
+    with open(list_path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            item = line.strip()
+            if not item or item.startswith("#"):
+                continue
+            entries.update(_split_entry_keys(item))
+    return entries
+
+
+def _load_dataset_split(source_path):
+    train_list_path = os.path.join(source_path, "train_list.txt")
+    test_list_path = os.path.join(source_path, "test_list.txt")
+    has_train_list = os.path.exists(train_list_path)
+    has_test_list = os.path.exists(test_list_path)
+
+    if has_train_list and has_test_list:
+        train_entries = _load_split_list(train_list_path)
+        test_entries = _load_split_list(test_list_path)
+        overlap = train_entries.intersection(test_entries)
+        if overlap:
+            sample = ", ".join(sorted(overlap)[:5])
+            raise ValueError(f"train_list.txt and test_list.txt overlap: {sample}")
+        return {
+            "mode": "list",
+            "train_entries": train_entries,
+            "test_entries": test_entries,
+        }
+
+    return {
+        "mode": "holdout",
+        "train_entries": set(),
+        "test_entries": set(),
+    }
+
+
+def _basename_sequence_number(image_name):
+    stem = os.path.splitext(os.path.basename(image_name))[0]
+    match = re.search(r"\d+$", stem)
+    if match is None:
+        return None
+    return int(match.group(0))
+
+
+def _split_for_image(image_name, split_config, llffhold=8):
+    keys = _split_entry_keys(image_name)
+    if split_config["mode"] == "list":
+        in_train = bool(keys.intersection(split_config["train_entries"]))
+        in_test = bool(keys.intersection(split_config["test_entries"]))
+        if in_train and in_test:
+            raise ValueError(f"Image appears in both train and test splits: {image_name}")
+        if in_train:
+            return "train"
+        if in_test:
+            return "test"
+        return None
+
+    sequence_number = _basename_sequence_number(image_name)
+    if sequence_number is not None and sequence_number % llffhold == 0:
+        return "test"
+    return "train"
+
+
+def _train_name_paths(source_path, name_dir, frame_count):
+    split_config = _load_dataset_split(source_path)
+    image_paths = [
+        path
+        for path in _image_paths(name_dir)
+        if _split_for_image(os.path.basename(path), split_config) == "train"
+    ]
+
+    if len(image_paths) != frame_count:
+        raise ValueError(
+            "Train image/mask frame count mismatch: "
+            f"{len(image_paths)} train image names from {name_dir}, "
+            f"but {frame_count} removal frames were generated. "
+            "Check train/test split files or holdout naming."
+        )
+    return image_paths
+
+
 def export_unseen_mask(source_path, output_path, unseen_mask_output_dir=None, name_dir=None):
     """
     Export unseen mask by using unseen contour as bbox prompt to SAM2.
@@ -38,6 +142,7 @@ def export_unseen_mask(source_path, output_path, unseen_mask_output_dir=None, na
     for file in os.listdir(removal_image_dir):
         if file.endswith(".png"):
             shutil.copy(os.path.join(removal_image_dir, file), os.path.join(removal_image_dir_jpg, file.replace(".png", ".jpg")))
+    removal_frame_paths = natsorted(glob(os.path.join(removal_image_dir_jpg, "*.jpg")))
     
     # 2. init_state
     state = predictor.init_state(video_path=removal_image_dir_jpg)
@@ -82,9 +187,8 @@ def export_unseen_mask(source_path, output_path, unseen_mask_output_dir=None, na
         
     # 5. visualize the masks with red & save to tmp
     vis_frame_stride = 30
-    img_paths = natsorted(glob(os.path.join(removal_image_dir_jpg, "*.jpg")))
-    for out_frame_idx in range(0, len(os.listdir(removal_image_dir_jpg)), vis_frame_stride):
-        img = Image.open(img_paths[out_frame_idx])
+    for out_frame_idx in range(0, len(removal_frame_paths), vis_frame_stride):
+        img = Image.open(removal_frame_paths[out_frame_idx])
         for out_obj_id, out_mask in video_segments[out_frame_idx].items():
             img = np.array(img)
             img[out_mask[0]] = (255, 0, 0)
@@ -93,8 +197,8 @@ def export_unseen_mask(source_path, output_path, unseen_mask_output_dir=None, na
             img.save(os.path.join("tmp/unseen_masks", f"{out_frame_idx}_{out_obj_id}.jpg"))
 
     # 6. save the output unseenmasks to unseen_masks dir, and in the same name as the image in the source_path
-    name_paths = natsorted(glob(name_dir + '/*'))
-    for out_frame_idx in range(0, len(os.listdir(removal_image_dir_jpg))):
+    name_paths = _train_name_paths(source_path, name_dir, len(removal_frame_paths))
+    for out_frame_idx in range(0, len(removal_frame_paths)):
         file_name = os.path.basename(name_paths[out_frame_idx])
         for out_obj_id, out_mask in video_segments[out_frame_idx].items():
             out_mask = np.where(out_mask > 0, 255, 0)

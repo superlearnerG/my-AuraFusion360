@@ -1,8 +1,10 @@
 import argparse
 import contextlib
 import os
+import ssl
 import sys
 from pathlib import Path
+from urllib.error import URLError
 from urllib.parse import urlparse
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +25,7 @@ from utils.image_utils import psnr
 from utils.loss_utils import ssim
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+FID_LOAD_EXCEPTIONS = (URLError, ssl.SSLError, TimeoutError, ConnectionError)
 
 
 def list_images(directory):
@@ -87,22 +90,29 @@ def compute_metrics(gt_dir, render_dir, device, batch_size, fid_dims, fid_worker
             ssim_values.append(ssim(render_tensor, gt_tensor).item())
             lpips_values.append(lpips_model(render_tensor, gt_tensor).item())
 
-    configure_fid_cache()
-    with open(os.devnull, "w", encoding="utf-8") as devnull, contextlib.redirect_stdout(devnull):
-        fid = fid_score.calculate_fid_given_paths(
-            [str(gt_dir), str(render_dir)],
-            batch_size,
-            str(device),
-            fid_dims,
-            fid_workers,
-        )
+    fid = None
+    fid_error = None
+    try:
+        configure_fid_cache()
+        with open(os.devnull, "w", encoding="utf-8") as devnull, contextlib.redirect_stdout(devnull):
+            fid = fid_score.calculate_fid_given_paths(
+                [str(gt_dir), str(render_dir)],
+                batch_size,
+                str(device),
+                fid_dims,
+                fid_workers,
+            )
+    except FID_LOAD_EXCEPTIONS as exc:
+        fid_error = f"{type(exc).__name__}: {exc}"
+        print(f"Skipping FID: unable to load/download InceptionV3 weights ({fid_error})", file=sys.stderr)
 
     return {
         "num_images": len(pairs),
         "PSNR": float(np.mean(psnr_values)),
         "SSIM": float(np.mean(ssim_values)),
         "LPIPS": float(np.mean(lpips_values)),
-        "FID": float(fid),
+        "FID": None if fid is None else float(fid),
+        "FID_error": fid_error,
     }
 
 
@@ -117,8 +127,13 @@ def write_results(output_path, model_path, iteration, gt_dir, render_dir, metric
         f"PSNR: {metrics['PSNR']:.6f}",
         f"SSIM: {metrics['SSIM']:.6f}",
         f"LPIPS: {metrics['LPIPS']:.6f}",
-        f"FID: {metrics['FID']:.6f}",
     ]
+    if metrics["FID"] is None:
+        lines.append("FID: skipped")
+        if metrics.get("FID_error"):
+            lines.append(f"FID_error: {metrics['FID_error']}")
+    else:
+        lines.append(f"FID: {metrics['FID']:.6f}")
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")

@@ -28,6 +28,28 @@ DEPTH_SCALE=0.0
 DEPTH_L1_WEIGHT_INIT=1.0
 DEPTH_L1_WEIGHT_FINAL=0.01
 
+write_time_consuming() {
+  local end_time end_text elapsed hours minutes seconds elapsed_hms output_path
+  end_time="$(date +%s)"
+  end_text="$(date '+%F %T')"
+  elapsed=$((end_time - PIPELINE_START_TIME))
+  hours=$((elapsed / 3600))
+  minutes=$(((elapsed % 3600) / 60))
+  seconds=$((elapsed % 60))
+  printf -v elapsed_hms "%02d:%02d:%02d" "$hours" "$minutes" "$seconds"
+  mkdir -p "$MODEL_PATH"
+  output_path="$MODEL_PATH/time_consuming.txt"
+  {
+    printf 'source_path: %s\n' "$SOURCE_PATH"
+    printf 'model_path: %s\n' "$MODEL_PATH"
+    printf 'start_time: %s\n' "$PIPELINE_START_TEXT"
+    printf 'end_time: %s\n' "$end_text"
+    printf 'elapsed_seconds: %d\n' "$elapsed"
+    printf 'elapsed_hms: %s\n' "$elapsed_hms"
+  } > "$output_path"
+  echo "[$end_text] Total pipeline time: $elapsed_hms ($elapsed seconds). Wrote $output_path"
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -198,6 +220,9 @@ fi
 
 mkdir -p "$MODEL_PATH"
 mkdir -p "$(dirname "$WORKFLOW_CONFIG")"
+
+PIPELINE_START_TIME="$(date +%s)"
+PIPELINE_START_TEXT="$(date '+%F %T')"
 
 TRAIN_DEPTH_ARGS=()
 if (( USE_DEPTH_LOSS )); then
@@ -413,6 +438,8 @@ echo "[$(date '+%F %T')] Iterative workflow status"
 echo "Workflow config: $WORKFLOW_CONFIG"
 echo "Outputs root: $MODEL_PATH/aura_iterative"
 
+write_time_consuming
+
 
 # 运行指令：
 
@@ -433,7 +460,7 @@ echo "Outputs root: $MODEL_PATH/aura_iterative"
 #   --target_ids "128" \
 #   --removal_thresh 0.7 \
 #   --fit_mask_iterations 2000 \
-#   --finetune_iteration 5000 
+#   --finetune_iteration 5000
 
 # bash pipeline.sh \
 #   -s ../../siga26/data/bonsai \
@@ -442,7 +469,7 @@ echo "Outputs root: $MODEL_PATH/aura_iterative"
 #   --target_ids "128" \
 #   --removal_thresh 0.7 \
 #   --fit_mask_iterations 2000 \
-#   --finetune_iteration 5000 
+#   --finetune_iteration 5000
 
 # bash pipeline.sh \
 #   -s ../../siga26/data/fruits \
@@ -451,7 +478,7 @@ echo "Outputs root: $MODEL_PATH/aura_iterative"
 #   --target_ids "[48,30,67,86,105,123,142],[161,180,217,198,236]" \
 #   --removal_thresh 0.7 \
 #   --fit_mask_iterations 2000 \
-#   --finetune_iteration 5000 
+#   --finetune_iteration 5000
 
 # bash pipeline.sh \
 #   -s ../../siga26/data/doppelherz \
@@ -460,4 +487,4 @@ echo "Outputs root: $MODEL_PATH/aura_iterative"
 #   --target_ids "[30,105,180]" \
 #   --removal_thresh 0.7 \
 #   --fit_mask_iterations 2000 \
-#   --finetune_iteration 5000 
+#   --finetune_iteration 5000

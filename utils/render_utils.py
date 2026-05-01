@@ -186,9 +186,10 @@ def generate_path(viewpoint_cameras, n_frames=480):
   new_poses = np.linalg.inv(colmap_to_world_transform) @ pad_poses(new_poses)
 
   traj = []
-  for c2w in new_poses:
+  for idx, c2w in enumerate(new_poses):
       c2w = c2w @ np.diag([1, -1, -1, 1])
       cam = copy.deepcopy(viewpoint_cameras[0])
+      cam.image_name = f"{idx:05d}"
       cam.image_height = int(cam.image_height / 2) * 2
       cam.image_width = int(cam.image_width / 2) * 2
       cam.world_view_transform = torch.from_numpy(np.linalg.inv(c2w).T).float().cuda()
@@ -339,9 +340,10 @@ def generate_path_spiral(viewpoint_cameras, n_frames=120, args=None):
   
   # 3. setup the camera
   traj = []
-  for c2w in spiral_c2ws:
+  for idx, c2w in enumerate(spiral_c2ws):
       c2w = c2w @ np.diag([-1, 1, 1, 1]) # flip x axis only
       cam = copy.deepcopy(viewpoint_cameras[0])
+      cam.image_name = f"{idx:05d}"
       cam.image_height = int(cam.image_height / 2) * 2
       cam.image_width = int(cam.image_width / 2) * 2
       

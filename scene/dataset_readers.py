@@ -503,7 +503,7 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
 
 
 def readColmapCamerasAura(
-    cam_extrinsics, cam_intrinsics, images_folder, stage, test_images_folder, object_mask_dir=None, unseen_mask_dir=None, unseen_mask_dilated_dir=None, reference_dir=None, use_reference_images=False, split_config=None, llffhold=8
+    cam_extrinsics, cam_intrinsics, images_folder, stage, test_images_folder, object_mask_dir=None, unseen_mask_dir=None, unseen_mask_dilated_dir=None, reference_dir=None, use_reference_images=False, split_config=None, llffhold=8, source_images_folder=None
 ):
     train_cam_infos = []
     test_cam_infos = []
@@ -546,7 +546,10 @@ def readColmapCamerasAura(
             continue
 
         train_image_path = _resolve_image_path(images_folder, image_basename)
-        test_image_path = _resolve_image_path(images_folder, image_basename) or _resolve_image_path(test_images_folder, image_basename)
+        test_image_path = _resolve_image_path(images_folder, image_basename)
+        if test_image_path is None and stage == "inpaint":
+            test_image_path = _resolve_image_path(source_images_folder, image_basename)
+        test_image_path = test_image_path or _resolve_image_path(test_images_folder, image_basename)
 
         if split == "train" and train_image_path is not None:
             image_path = train_image_path
@@ -636,6 +639,7 @@ def readColmapSceneInfoAura(path, images, eval, llffhold=8, stage="train", args=
         use_reference_images=getattr(args, "use_reference_images", False),
         split_config=split_config,
         llffhold=llffhold,
+        source_images_folder=os.path.join(path, "images"),
     )
 
     train_cam_infos = sorted(

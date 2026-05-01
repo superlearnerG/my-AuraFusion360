@@ -22,6 +22,73 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 from utils.pretrained_paths import require_pretrained_dir, require_stable_diffusion_inpaint_checkpoint
 
+IMAGE_EXTENSIONS = (".jpg", ".JPG", ".jpeg", ".JPEG", ".png", ".PNG")
+
+
+def list_image_names(root):
+    return natsorted(
+        [
+            name
+            for name in os.listdir(root)
+            if os.path.isfile(os.path.join(root, name)) and Path(name).suffix in IMAGE_EXTENSIONS
+        ]
+    )
+
+
+def image_names_by_stem(names, root):
+    by_stem = {}
+    for name in names:
+        stem = Path(name).stem
+        if stem in by_stem:
+            raise ValueError(f"Duplicate image stem '{stem}' in {root}: {by_stem[stem]}, {name}")
+        by_stem[stem] = name
+    return by_stem
+
+
+def aligned_input_lists(ref_root, source_root, mask_root):
+    ref_names = list_image_names(ref_root)
+    source_names = list_image_names(source_root)
+    mask_names = list_image_names(mask_root)
+
+    ref_by_stem = image_names_by_stem(ref_names, ref_root)
+    source_by_stem = image_names_by_stem(source_names, source_root)
+    ref_names_aligned = []
+    source_names_aligned = []
+    missing_ref_stems = []
+    missing_source_stems = []
+    for mask_name in mask_names:
+        mask_stem = Path(mask_name).stem
+        ref_name = ref_by_stem.get(mask_stem)
+        source_name = source_by_stem.get(mask_stem)
+        if ref_name is None:
+            missing_ref_stems.append(mask_stem)
+        else:
+            ref_names_aligned.append(ref_name)
+        if source_name is None:
+            missing_source_stems.append(mask_stem)
+        else:
+            source_names_aligned.append(source_name)
+
+    if missing_ref_stems:
+        sample = ", ".join(missing_ref_stems[:5])
+        raise FileNotFoundError(f"Reference images missing for mask stems in {ref_root}: {sample}")
+    if missing_source_stems:
+        sample = ", ".join(missing_source_stems[:5])
+        raise FileNotFoundError(f"Source renders missing for mask stems in {source_root}: {sample}")
+
+    if len(ref_names) != len(ref_names_aligned):
+        print(
+            f"Using {len(ref_names_aligned)} reference images matched to masks "
+            f"from {len(ref_names)} files in {ref_root}"
+        )
+    if len(source_names) != len(source_names_aligned):
+        print(
+            f"Using {len(source_names_aligned)} source renders matched to masks "
+            f"from {len(source_names)} files in {source_root}"
+        )
+
+    return ref_names_aligned, source_names_aligned, mask_names
+
 
 def initialize_model(path):
     config = OmegaConf.load(os.path.join(path, "model_config.yaml"))
@@ -237,11 +304,8 @@ def LeftRefill(ref_img_path, source_root, ref_root, mask_root, output_root, stre
     
     # Run
     ref_img = Image.open(ref_img_path)
-    num_image = len(os.listdir(source_root))
-    ref_list = natsorted(os.listdir(ref_root))
-    source_list = natsorted(os.listdir(source_root))
-    mask_list = natsorted(os.listdir(mask_root))
-    assert len(ref_list) == len(source_list) == len(mask_list), "Number of images not match"
+    ref_list, source_list, mask_list = aligned_input_lists(ref_root, source_root, mask_root)
+    num_image = len(source_list)
     
     # ref_img.save(os.path.join(output_root, ref_list[0]))
     # If use test view as ref, start from 1

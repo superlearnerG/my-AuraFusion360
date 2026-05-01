@@ -10,6 +10,7 @@
 #
 
 import os
+import shutil
 from datetime import datetime
 from functools import partial
 
@@ -21,6 +22,18 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from utils.render_utils import save_gray_img_u8, save_img_f32, save_img_u8
 from utils.warping_utils import warping
+
+
+def _reset_dir(path):
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+    os.makedirs(path, exist_ok=True)
+
+
+def _viewpoint_output_stem(viewpoint_cam, idx):
+    image_name = getattr(viewpoint_cam, "image_name", "")
+    stem = os.path.splitext(os.path.basename(str(image_name)))[0]
+    return stem or f"{idx:05d}"
 
 
 def post_process_mesh(mesh, cluster_to_keep=1000):
@@ -462,20 +475,20 @@ class GaussianExtractor(object):
         mask_path = os.path.join(path, "object_mask")
         seen_path = os.path.join(path, "seen_mask")
         unseen_path = os.path.join(path, "unseen_contour")
-        os.makedirs(render_path, exist_ok=True)
-        os.makedirs(vis_path, exist_ok=True)
-        os.makedirs(depth_normal_path, exist_ok=True)
-        os.makedirs(gts_path, exist_ok=True)
-        os.makedirs(mask_path, exist_ok=True)
-        os.makedirs(seen_path, exist_ok=True)
-        os.makedirs(unseen_path, exist_ok=True)
+        for output_dir in [render_path, vis_path, depth_normal_path, gts_path, mask_path, seen_path, unseen_path]:
+            _reset_dir(output_dir)
+        used_stems = set()
         for idx, viewpoint_cam in tqdm(enumerate(self.viewpoint_stack), desc="export images"):
+            stem = _viewpoint_output_stem(viewpoint_cam, idx)
+            if stem in used_stems:
+                stem = f"{stem}_{idx:05d}"
+            used_stems.add(stem)
             gt = viewpoint_cam.original_image[0:3, :, :]
-            save_img_u8(gt.permute(1,2,0).cpu().numpy(), os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
-            save_img_u8(self.rgbmaps[idx].permute(1,2,0).cpu().numpy(), os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
-            save_img_f32(self.depthmaps[idx][0].cpu().numpy(), os.path.join(vis_path, 'depth_{0:05d}'.format(idx) + ".tiff"))
-            save_gray_img_u8(self.maskmaps[idx][0].cpu().numpy(), os.path.join(mask_path, '{0:05d}'.format(idx) + ".png"))
-            save_gray_img_u8(self.seenmaps[idx][0].cpu().numpy(), os.path.join(seen_path, '{0:05d}'.format(idx) + ".png"))
-            # save_img_u8(self.normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, os.path.join(vis_path, 'normal_{0:05d}'.format(idx) + ".png"))
-            save_img_u8(self.depth_normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, os.path.join(depth_normal_path, '{0:05d}'.format(idx) + ".png"))
-            save_gray_img_u8(self.unseenmaps[idx][0].cpu().numpy(), os.path.join(unseen_path, '{0:05d}'.format(idx) + ".png"))
+            save_img_u8(gt.permute(1,2,0).cpu().numpy(), os.path.join(gts_path, f"{stem}.png"))
+            save_img_u8(self.rgbmaps[idx].permute(1,2,0).cpu().numpy(), os.path.join(render_path, f"{stem}.png"))
+            save_img_f32(self.depthmaps[idx][0].cpu().numpy(), os.path.join(vis_path, f"depth_{stem}.tiff"))
+            save_gray_img_u8(self.maskmaps[idx][0].cpu().numpy(), os.path.join(mask_path, f"{stem}.png"))
+            save_gray_img_u8(self.seenmaps[idx][0].cpu().numpy(), os.path.join(seen_path, f"{stem}.png"))
+            # save_img_u8(self.normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, os.path.join(vis_path, f"normal_{stem}.png"))
+            save_img_u8(self.depth_normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, os.path.join(depth_normal_path, f"{stem}.png"))
+            save_gray_img_u8(self.unseenmaps[idx][0].cpu().numpy(), os.path.join(unseen_path, f"{stem}.png"))

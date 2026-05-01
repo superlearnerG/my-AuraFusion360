@@ -22,6 +22,11 @@ DILATE_MASK_ITER=3
 PORT=6017
 SKIP_BASE_TRAIN=0
 RENDER_INTERMEDIATE=0
+USE_DEPTH_LOSS=0
+DEPTHS=""
+DEPTH_SCALE=0.0
+DEPTH_L1_WEIGHT_INIT=1.0
+DEPTH_L1_WEIGHT_FINAL=0.01
 
 usage() {
   cat <<'EOF'
@@ -51,6 +56,11 @@ Options:
   --port N                        train.py GUI/network port. Default: 6017
   --skip_base_train               Skip initial train.py and reuse <model_path>/point_cloud/iteration_<base_iteration>
   --render_intermediate           Keep non-final round train/test renders
+  --use_depth_loss                Enable raw depth supervision during base training
+  --depths PATH                   Raw .npy depth folder. Default when enabled: <source_path>/depth
+  --depth_scale V                 Raw-depth to COLMAP/Aura scale. Default: 0.0, estimate from COLMAP tracks
+  --depth_l1_weight_init V        Initial inverse-depth loss weight. Default: 1.0
+  --depth_l1_weight_final V       Final inverse-depth loss weight. Default: 0.01
   -h, --help                      Show this help
 
 Environment:
@@ -128,6 +138,26 @@ while [[ $# -gt 0 ]]; do
       RENDER_INTERMEDIATE=1
       shift
       ;;
+    --use_depth_loss)
+      USE_DEPTH_LOSS=1
+      shift
+      ;;
+    --depths)
+      DEPTHS="$2"
+      shift 2
+      ;;
+    --depth_scale)
+      DEPTH_SCALE="$2"
+      shift 2
+      ;;
+    --depth_l1_weight_init)
+      DEPTH_L1_WEIGHT_INIT="$2"
+      shift 2
+      ;;
+    --depth_l1_weight_final)
+      DEPTH_L1_WEIGHT_FINAL="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -168,6 +198,20 @@ fi
 
 mkdir -p "$MODEL_PATH"
 mkdir -p "$(dirname "$WORKFLOW_CONFIG")"
+
+TRAIN_DEPTH_ARGS=()
+if (( USE_DEPTH_LOSS )); then
+  if [[ -z "$DEPTHS" ]]; then
+    DEPTHS="$SOURCE_PATH/depth"
+  fi
+  TRAIN_DEPTH_ARGS+=(
+    --use_depth_loss
+    --depths "$DEPTHS"
+    --depth_scale "$DEPTH_SCALE"
+    --depth_l1_weight_init "$DEPTH_L1_WEIGHT_INIT"
+    --depth_l1_weight_final "$DEPTH_L1_WEIGHT_FINAL"
+  )
+fi
 
 echo "[$(date '+%F %T')] Generating workflow config: $WORKFLOW_CONFIG"
 SOURCE_PATH="$SOURCE_PATH" \
@@ -328,6 +372,7 @@ else
     --test_iterations "$BASE_ITERATION" "$TRAIN_ITERATIONS" \
     --optimize_is_masked_iter "$TRAIN_ITERATIONS" \
     --optimize_is_seen_iter "$TRAIN_ITERATIONS" \
+    "${TRAIN_DEPTH_ARGS[@]}" \
     --port "$PORT"
 fi
 

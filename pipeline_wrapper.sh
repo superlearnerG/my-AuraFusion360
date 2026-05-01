@@ -146,3 +146,5 @@ else
     run_scene "$scene_name" "$target_ids"
   done
 fi
+
+# 我直接在 wrapper 后边加 --use_depth_loss 就行了，pipeline.sh 里会覆盖默认值，没必要在这里加一个环境变量了

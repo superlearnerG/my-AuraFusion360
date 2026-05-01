@@ -50,6 +50,9 @@ class ModelParams(ParamGroup):
         self._source_path = ""
         self._model_path = ""
         self._images = "images"
+        self._depths = ""
+        self.use_depth_loss = False
+        self.depth_scale = 0.0
         self._resolution = -1
         self._white_background = False
         self.data_device = "cuda"
@@ -86,6 +89,8 @@ class ModelParams(ParamGroup):
     def extract(self, args):
         g = super().extract(args)
         g.source_path = os.path.abspath(g.source_path)
+        if getattr(g, "use_depth_loss", False) and not getattr(g, "depths", ""):
+            g.depths = "depth"
         return g
 
 class PipelineParams(ParamGroup):
@@ -129,6 +134,8 @@ class OptimizationParams(ParamGroup):
         self.is_seen_mean_lr = 0.01 # loss for overall is_seen (want 'is_seen' only on surface)
         self.is_masked_3d_lr = 0.01
         self.other_depth_lr = 0.0 # for training depth loss, for spin-nerf dataset
+        self.depth_l1_weight_init = 1.0
+        self.depth_l1_weight_final = 0.01
         
         # For object removal
         

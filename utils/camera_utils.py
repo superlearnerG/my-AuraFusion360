@@ -24,6 +24,24 @@ from utils.graphics_utils import fov2focal
 
 WARNED = False
 
+def _load_raw_depth_tensor(depth_path, resolution, depth_scale):
+    raw_depth = np.load(depth_path)
+    raw_depth = np.asarray(raw_depth)
+    if raw_depth.ndim == 3:
+        if raw_depth.shape[-1] == 1:
+            raw_depth = raw_depth[..., 0]
+        elif raw_depth.shape[0] == 1:
+            raw_depth = raw_depth[0]
+        else:
+            raise ValueError(f"Expected a single-channel raw depth map at '{depth_path}', got shape {raw_depth.shape}.")
+    if raw_depth.ndim != 2:
+        raise ValueError(f"Expected a 2D raw depth map at '{depth_path}', got shape {raw_depth.shape}.")
+
+    raw_depth = raw_depth.astype(np.float32, copy=False)
+    scaled_depth = raw_depth * float(depth_scale)
+    resized_depth = cv2.resize(scaled_depth, resolution)
+    return torch.from_numpy(resized_depth[None].astype(np.float32, copy=False))
+
 def loadCam(args, id, cam_info, resolution_scale):
     orig_w, orig_h = cam_info.image.size
 
@@ -100,7 +118,10 @@ def loadCam(args, id, cam_info, resolution_scale):
     
     # load depth if available
     image_depth = None
-    if cam_info.depth is not None:
+    depth_path = getattr(cam_info, "depth_path", "")
+    if depth_path:
+        image_depth = _load_raw_depth_tensor(depth_path, resolution, getattr(cam_info, "depth_scale", 1.0))
+    elif cam_info.depth is not None:
         image_depth = PILtoTorch_depth(cam_info.depth, resolution)
 
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 

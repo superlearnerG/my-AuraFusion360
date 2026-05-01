@@ -27,7 +27,7 @@ from arguments import (
 )
 from gaussian_renderer import network_gui, render, render_mask
 from scene import GaussianModel, Scene
-from utils.general_utils import safe_state
+from utils.general_utils import get_expon_lr_func, safe_state
 from utils.image_utils import psnr, render_net_image
 from utils.loss_utils import l1_loss, loss_is_masked_3d, ssim
 
@@ -65,6 +65,25 @@ def compute_scale_and_shift(prediction, target, mask):
 def l1_loss_masked(network_output, gt, mask):
     return (torch.abs((network_output - gt)) * mask).mean()
 
+def compute_depth_loss(render_pkg, viewpoint_cam, depth_l1_weight_value, use_depth_loss):
+    if not use_depth_loss or depth_l1_weight_value <= 0 or not getattr(viewpoint_cam, "depth_reliable", False):
+        return torch.tensor(0.0, device=render_pkg["render"].device), 0.0
+
+    depth = viewpoint_cam.original_image_depth
+    depth_mask = getattr(viewpoint_cam, "depth_mask", None)
+    if depth is None or depth_mask is None:
+        return torch.tensor(0.0, device=render_pkg["render"].device), 0.0
+
+    render_device = render_pkg["render"].device
+    depth = depth.to(render_device)
+    depth_mask = depth_mask.to(render_device)
+    target_invdepth = torch.where(depth_mask > 0, 1.0 / depth.clamp_min(1e-6), torch.zeros_like(depth))
+    pred_invdepth = render_pkg["rend_alpha"] / render_pkg["surf_depth"].clamp_min(1e-6)
+    valid_pixels = depth_mask.sum().clamp_min(1.0)
+    depth_l1 = (torch.abs(pred_invdepth - target_invdepth) * depth_mask).sum() / valid_pixels
+    depth_loss = depth_l1_weight_value * depth_l1
+    return depth_loss, depth_loss.item()
+
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -89,6 +108,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_normal_for_log = 0.0
     ema_is_masked_for_log = 0.0
     ema_is_seen_for_log = 0.0
+    ema_depth_for_log = 0.0
+    use_depth_loss = getattr(dataset, "use_depth_loss", False)
+    depth_l1_weight = get_expon_lr_func(opt.depth_l1_weight_init, opt.depth_l1_weight_final, max_steps=opt.iterations) if use_depth_loss else None
     
     
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
@@ -156,18 +178,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             
             # if iteration % 5:
             loss += opt.is_seen_mean_lr * torch.mean(gaussians.get_is_masked[:, 1])
-        
-        other_depth_lr = 0.0 # reserved for spin-nerf-dataset
-        if other_depth_lr > 0:
-            depth = render_pkg["surf_depth"]
-            midas_depth = viewpoint_cam.original_image_depth.cuda()
-            gt_mask = torch.tensor(viewpoint_cam.original_image_mask, dtype=torch.float).cuda().unsqueeze(0)
-            # valid_mask = (1.0-gt_mask)
-            valid_mask = torch.ones_like(gt_mask) # all valid
-            scale, shift = compute_scale_and_shift(depth, midas_depth, valid_mask)
-            scale = torch.abs(scale) # modi here
-            aligned_depth = scale.view(-1, 1, 1) * depth + shift.view(-1, 1, 1)
-            loss += other_depth_lr * l1_loss_masked(aligned_depth, midas_depth, valid_mask)
+
+        Ll1depth = 0.0
+        if use_depth_loss:
+            depth_loss, Ll1depth = compute_depth_loss(render_pkg, viewpoint_cam, depth_l1_weight(iteration), use_depth_loss)
+            loss += depth_loss
             
         # regularization
         lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
@@ -194,6 +209,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             ema_normal_for_log = 0.4 * normal_loss.item() + 0.6 * ema_normal_for_log
             ema_is_masked_for_log = 0.4 * is_masked_loss.item() + 0.6 * ema_is_masked_for_log
             ema_is_seen_for_log = 0.4 * is_seen_loss.item() + 0.6 * ema_is_seen_for_log
+            if use_depth_loss:
+                ema_depth_for_log = 0.4 * Ll1depth + 0.6 * ema_depth_for_log
 
 
             if iteration % 10 == 0:
@@ -205,6 +222,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     "is_seen": f"{ema_is_seen_for_log:.{5}f}",
                     "Points": f"{len(gaussians.get_xyz)}"
                 }
+                if use_depth_loss:
+                    loss_dict["depth"] = f"{ema_depth_for_log:.{5}f}"
                 progress_bar.set_postfix(loss_dict)
 
                 progress_bar.update(10)
@@ -215,6 +234,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if tb_writer is not None:
                 tb_writer.add_scalar('train_loss_patches/dist_loss', ema_dist_for_log, iteration)
                 tb_writer.add_scalar('train_loss_patches/normal_loss', ema_normal_for_log, iteration)
+                if use_depth_loss:
+                    tb_writer.add_scalar('train_loss_patches/depth_loss', ema_depth_for_log, iteration)
                 tb_writer.add_scalar('train_loss_patches/is_masked_loss', ema_is_masked_for_log, iteration)
                 tb_writer.add_scalar('train_loss_patches/is_seen_loss', ema_is_seen_for_log, iteration)
 

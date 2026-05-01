@@ -42,7 +42,20 @@ class Camera(nn.Module):
             print(f"[Warning] Custom device {data_device} failed, fallback to default cuda device" )
             self.data_device = torch.device("cuda")
         self.original_image_mask = image_mask
-        self.original_image_depth = depth
+        self.original_image_depth = None
+        self.depth_mask = None
+        self.depth_reliable = False
+        if depth is not None:
+            depth = depth.to(self.data_device).float()
+            if depth.ndim == 2:
+                depth = depth.unsqueeze(0)
+            if depth.shape[0] != 1:
+                depth = depth[:1]
+            valid_depth = torch.isfinite(depth) & (depth > 0.0)
+            depth = torch.where(valid_depth, depth, torch.zeros_like(depth))
+            self.original_image_depth = depth
+            self.depth_mask = valid_depth.float()
+            self.depth_reliable = bool(valid_depth.any().item())
         self.original_image = image.clamp(0.0, 1.0).to(self.data_device)
         self.image_width = self.original_image.shape[2]
         self.image_height = self.original_image.shape[1]
@@ -50,6 +63,9 @@ class Camera(nn.Module):
         if gt_alpha_mask is not None:
             # self.original_image *= gt_alpha_mask.to(self.data_device)
             self.gt_alpha_mask = gt_alpha_mask.to(self.data_device)
+            if self.depth_mask is not None:
+                self.depth_mask *= self.gt_alpha_mask
+                self.depth_reliable = bool((self.depth_mask > 0).any().item())
         else:
             self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device)
             self.gt_alpha_mask = None

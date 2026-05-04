@@ -164,23 +164,48 @@ def source_image_dir(source_path: str | Path, spec: dict[str, Any]) -> Path:
     return (Path(source_path).expanduser().resolve() / images).resolve()
 
 
+def removal_render_dir(paths: dict[str, Path]) -> Path:
+    return paths["workspace"] / "train" / "ours_0_object_removal" / "renders"
+
+
+def list_images(directory: str | Path) -> list[Path]:
+    directory = Path(directory).expanduser().resolve()
+    if not directory.is_dir():
+        raise FileNotFoundError(f"Image directory not found: {directory}")
+    images = sorted(path for path in directory.iterdir() if path.is_file() and path.suffix in IMAGE_EXTENSIONS)
+    if not images:
+        raise FileNotFoundError(f"No images found in {directory}")
+    return images
+
+
+def assert_not_source_images(source_path: str | Path, path: str | Path, label: str) -> None:
+    source_images = (Path(source_path).expanduser().resolve() / "images").resolve()
+    candidate = Path(path).expanduser().resolve()
+    if candidate == source_images or source_images in candidate.parents:
+        raise RuntimeError(
+            f"{label} points to source/images, which would leak original object pixels into iterative inpaint: {candidate}"
+        )
+
+
+def find_reference_image_from_removal(paths: dict[str, Path], spec: dict[str, Any], args: argparse.Namespace) -> Path:
+    render_root = removal_render_dir(paths)
+    refs = list_images(render_root)
+    reference_index = int(spec.get("reference_index", -1))
+    try:
+        ref_img_path = refs[reference_index]
+    except IndexError as exc:
+        raise IndexError(
+            f"reference_index {reference_index} is out of range for {len(refs)} removal renders in {render_root}"
+        ) from exc
+    assert_not_source_images(args.source_path, ref_img_path, "LeftRefill reference image")
+    return ref_img_path
+
+
 def workflow_path(workflow: dict[str, Any], key: str, default: str | None = None) -> Path | None:
     value = workflow.get(key, default)
     if value is None:
         return None
     return resolve_path(value, PROJECT_ROOT)
-
-
-def find_reference_image(args: argparse.Namespace, workflow: dict[str, Any], spec: dict[str, Any]) -> Path:
-    if spec.get("ref_img_path"):
-        return resolve_path(spec["ref_img_path"], PROJECT_ROOT)
-    reference_dir_value = spec.get("reference_dir") or workflow.get("reference_dir")
-    reference_dir = resolve_path(reference_dir_value, PROJECT_ROOT) if reference_dir_value else Path(args.source_path).expanduser().resolve() / "reference"
-    refs = sorted(path for path in reference_dir.iterdir() if path.is_file() and path.suffix in IMAGE_EXTENSIONS)
-    if not refs:
-        raise FileNotFoundError(f"No reference images found in {reference_dir}")
-    reference_index = int(spec.get("reference_index", -1))
-    return refs[reference_index]
 
 
 def ensure_round_workspace(args: argparse.Namespace, workflow: dict[str, Any], spec: dict[str, Any], paths: dict[str, Path], round_index: int) -> dict[str, Any]:
@@ -287,6 +312,9 @@ def run_prepare_round(args: argparse.Namespace, workflow: dict[str, Any], round_
     run_cmd(remove_cmd)
 
     removal_output_path = paths["workspace"] / "train" / "ours_0_object_removal"
+    removal_renders = removal_render_dir(paths)
+    list_images(removal_renders)
+    assert_not_source_images(args.source_path, removal_renders, "Initial inpaint image root")
     run_cmd([
         args.python_bin,
         "utils/sam2_utils.py",
@@ -300,7 +328,6 @@ def run_prepare_round(args: argparse.Namespace, workflow: dict[str, Any], round_
         str(image_dir),
     ])
 
-    reference_dir = workflow_path(workflow, "reference_dir", None) or Path(args.source_path).expanduser().resolve() / "reference"
     init_cmd = [
         args.python_bin,
         "inpaint.py",
@@ -310,13 +337,12 @@ def run_prepare_round(args: argparse.Namespace, workflow: dict[str, Any], round_
         str(paths["workspace"]),
         "--iteration",
         "0",
+        "--images",
+        str(removal_renders),
         "--unseen_mask_dir",
         str(paths["unseen_masks"]),
         "--unseen_mask_dilated_dir",
         str(paths["unseen_masks_dilated"]),
-        "--reference_dir",
-        str(reference_dir),
-        "--use_reference_images",
         "--reference_index",
         str(int(spec["reference_index"])),
         "--dilate_mask_kernel_size",
@@ -341,9 +367,12 @@ def run_leftrefill(args: argparse.Namespace, workflow: dict[str, Any], round_ind
     spec = resolve_round_spec(workflow, round_index)
     paths = round_paths(args, workflow, spec, round_index)
     meta = load_round_meta(paths, base_meta(args, round_index, spec, paths))
-    ref_img_path = find_reference_image(args, workflow, spec)
-    source_root = paths["workspace"] / "train" / "ours_object_inpaint_init" / "renders"
-    ref_root = source_image_dir(args.source_path, spec)
+    ref_img_path = find_reference_image_from_removal(paths, spec, args)
+    source_root = removal_render_dir(paths)
+    ref_root = removal_render_dir(paths)
+    list_images(source_root)
+    assert_not_source_images(args.source_path, source_root, "LeftRefill source root")
+    assert_not_source_images(args.source_path, ref_root, "LeftRefill name-matching root")
     cmd = [
         args.python_bin,
         "utils/LeftRefill/sdedit_utils.py",

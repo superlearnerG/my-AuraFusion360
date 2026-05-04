@@ -320,10 +320,7 @@ def LeftRefill(ref_img_path, source_root, ref_root, mask_root, output_root, stre
         source_img_np = np.array(source_img)
         result_img_np[mask_img_np == 0] = source_img_np[mask_img_np == 0]
         result_img = Image.fromarray(result_img_np)
-        if ref_list[i].split('.')[0] == os.path.basename(ref_img_path).split('.')[0]:
-            ref_img.save(os.path.join(output_root, ref_list[i]))
-        else:
-            result_img.save(os.path.join(output_root, ref_list[i]))
+        result_img.save(os.path.join(output_root, ref_list[i]))
         
 
 if __name__ == "__main__":    
@@ -388,9 +385,10 @@ if __name__ == "__main__":
         else:
             if scene_name is None:
                 raise ValueError("--scene is required when explicit path args are not used")
-            ref_img_path = natsorted(glob(f"data/{dataset_name}/{scene_name}/reference/*"))[reference_index]
-            source_root = f"output/{dataset_name}/{scene_name}/train/ours_object_inpaint_init/renders"
-            ref_root = f"data/{dataset_name}/{scene_name}/images"
+            source_root = f"output/{dataset_name}/{scene_name}/train/ours_30000_object_removal/renders"
+            ref_names = list_image_names(source_root)
+            ref_img_path = os.path.join(source_root, ref_names[reference_index])
+            ref_root = source_root
             mask_root = f"data/{dataset_name}/{scene_name}/unseen_masks_dilated"
             output_root = f"data/{dataset_name}/{scene_name}/inpaint"
         

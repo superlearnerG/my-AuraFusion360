@@ -64,7 +64,7 @@ Options:
   -s, --source_path PATH          COLMAP scene root with images/ and sparse/
   -m, --model_path PATH           AuraFusion360 output/model root
   --raw_mask_dir PATH             Multi-gray masks. Default: <source_path>/object_mask
-  --reference_dir PATH            Reference images. Default: <source_path>/images
+  --reference_dir PATH            Deprecated for iterative inpaint; removal renders are used instead
   --workflow_config PATH          Output workflow JSON. Default: <model_path>/aura_iterative/workflow_config.json
   --target_ids IDS                Optional round ids, e.g. "1,[2,3,4],5". Default: all non-zero ids as separate rounds.
   --base_iteration N              Base checkpoint iteration used by iterative workflow. Default: 30000
@@ -72,7 +72,7 @@ Options:
   --fit_mask_iterations N         Per-round _is_masked fitting iterations. Default: 2000
   --finetune_iteration N          Per-round final inpaint finetune iterations. Default: 5000
   --removal_thresh V              Gaussian removal threshold. Default: 0.7
-  --reference_index N             Reference view index for inpaint init. Default: 0
+  --reference_index N             Removal-render index used as inpaint/LeftRefill reference. Default: 0
   --dilate_mask_kernel_size N     Unseen mask dilation kernel. Default: 5
   --dilate_mask_iter N            Unseen mask dilation iterations. Default: 3
   --port N                        train.py GUI/network port. Default: 6017
@@ -198,9 +198,6 @@ export TORCH_HOME="$SCRIPT_DIR/../pretrained_models/torch"
 if [[ -z "$RAW_MASK_DIR" ]]; then
   RAW_MASK_DIR="$SOURCE_PATH/object_mask"
 fi
-if [[ -z "$REFERENCE_DIR" ]]; then
-  REFERENCE_DIR="$SOURCE_PATH/images"
-fi
 if [[ -z "$WORKFLOW_CONFIG" ]]; then
   WORKFLOW_CONFIG="$MODEL_PATH/aura_iterative/workflow_config.json"
 fi
@@ -213,9 +210,8 @@ if [[ ! -d "$RAW_MASK_DIR" ]]; then
   echo "raw_mask_dir not found: $RAW_MASK_DIR" >&2
   exit 1
 fi
-if [[ ! -d "$REFERENCE_DIR" ]]; then
-  echo "reference_dir not found: $REFERENCE_DIR" >&2
-  exit 1
+if [[ -n "$REFERENCE_DIR" ]]; then
+  echo "[$(date '+%F %T')] Warning: --reference_dir is ignored by iterative inpaint; per-round removal renders are used instead."
 fi
 
 mkdir -p "$MODEL_PATH"
@@ -241,7 +237,6 @@ fi
 echo "[$(date '+%F %T')] Generating workflow config: $WORKFLOW_CONFIG"
 SOURCE_PATH="$SOURCE_PATH" \
 RAW_MASK_DIR="$RAW_MASK_DIR" \
-REFERENCE_DIR="$REFERENCE_DIR" \
 WORKFLOW_CONFIG="$WORKFLOW_CONFIG" \
 TARGET_IDS="$TARGET_IDS" \
 BASE_ITERATION="$BASE_ITERATION" \
@@ -333,7 +328,6 @@ def scan_ids(mask_dir):
 
 source_path = Path(os.environ["SOURCE_PATH"]).expanduser().resolve()
 raw_mask_dir = Path(os.environ["RAW_MASK_DIR"]).expanduser().resolve()
-reference_dir = Path(os.environ["REFERENCE_DIR"]).expanduser().resolve()
 workflow_config = Path(os.environ["WORKFLOW_CONFIG"]).expanduser().resolve()
 
 target_specs = parse_target_specs(os.environ["TARGET_IDS"])
@@ -345,7 +339,6 @@ if not target_specs:
 workflow = {
     "base_iteration": int(os.environ["BASE_ITERATION"]),
     "raw_object_mask_dir": str(raw_mask_dir),
-    "reference_dir": str(reference_dir),
     "source_path": str(source_path),
     "defaults": {
         "removal_thresh": float(os.environ["REMOVAL_THRESH"]),

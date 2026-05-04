@@ -364,7 +364,9 @@ def _maybe_use_reference_image(image_path, images_folder, reference_dir=None, us
     if reference_dir is None:
         reference_dir = os.path.join(os.path.dirname(image_path.replace(f"{os.path.basename(images_folder)}", "reference")))
     reference_path = _find_image_for_stem(reference_dir, image_stem)
-    return reference_path or image_path
+    if reference_path is None:
+        raise FileNotFoundError(f"Reference image for stem '{image_stem}' not found in {reference_dir}")
+    return reference_path
 
 def readColmapCameras(
     cam_extrinsics, cam_intrinsics, images_folder, stage, test_images_folder, object_mask_dir=None, unseen_mask_dir=None, unseen_mask_dilated_dir=None, reference_dir=None, use_reference_images=False

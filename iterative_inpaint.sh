@@ -91,5 +91,6 @@ run_stage() {
 for (( round_index=0; round_index<OBJECT_NUM; round_index++ )); do
   run_stage prepare-round "$round_index"
   run_stage run-leftrefill "$round_index"
+  run_stage initialize-round "$round_index"
   run_stage finalize-round "$round_index"
 done

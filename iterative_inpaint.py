@@ -7,6 +7,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import cv2
+import numpy as np
+from PIL import Image
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR
 if str(PROJECT_ROOT) not in sys.path:
@@ -43,7 +47,7 @@ IMAGE_EXTENSIONS = (".jpg", ".JPG", ".jpeg", ".JPEG", ".png", ".PNG")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Round-based iterative inpaint workflow for my-AuraFusion360.")
-    parser.add_argument("command", choices=["init", "prepare-round", "run-leftrefill", "finalize-round", "status"])
+    parser.add_argument("command", choices=["init", "prepare-round", "run-leftrefill", "initialize-round", "finalize-round", "status"])
     parser.add_argument("-s", "--source_path", required=True)
     parser.add_argument("-m", "--model_path", required=True)
     parser.add_argument("--workflow_config", required=True)
@@ -241,6 +245,73 @@ def is_last_round(workflow: dict[str, Any], round_index: int) -> bool:
     return round_index == len(workflow["rounds"]) - 1
 
 
+def prepare_unseen_masks_dilated(paths: dict[str, Path], spec: dict[str, Any]) -> None:
+    mask_paths = list_images(paths["unseen_masks"])
+    output_dir = ensure_dir(paths["unseen_masks_dilated"])
+    kernel_size = max(1, int(spec["dilate_mask_kernel_size"]))
+    dilate_iter = int(spec["dilate_mask_iter"])
+    keep_all_components = len(spec["target_id"]) > 1
+    kernel = np.ones((kernel_size, kernel_size), np.uint8)
+
+    for mask_path in mask_paths:
+        mask = np.array(Image.open(mask_path).convert("L"))
+        mask = np.where(mask > 127, 1, 0).astype(np.uint8)
+        if dilate_iter > 0:
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+            if not keep_all_components:
+                num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
+                if num_labels > 1:
+                    largest_component = np.argmax(stats[1:, cv2.CC_STAT_AREA]) + 1
+                    cleaned_mask = np.zeros_like(mask)
+                    cleaned_mask[labels == largest_component] = 1
+                    mask = cleaned_mask.astype(np.uint8)
+            mask = cv2.dilate(mask, kernel, iterations=dilate_iter)
+        Image.fromarray((mask * 255).astype(np.uint8)).save(output_dir / mask_path.name)
+
+
+def run_initial_inpaint(args: argparse.Namespace, spec: dict[str, Any], paths: dict[str, Path]) -> None:
+    inpaint_images = list_images(paths["inpaint_images"])
+    if not inpaint_images:
+        raise FileNotFoundError(f"No LeftRefill inpaint images found in {paths['inpaint_images']}")
+    assert_not_source_images(args.source_path, paths["inpaint_images"], "Initial inpaint image root")
+    init_cmd = [
+        args.python_bin,
+        "inpaint.py",
+        "-s",
+        str(Path(args.source_path).expanduser().resolve()),
+        "-m",
+        str(paths["workspace"]),
+        "--iteration",
+        "0",
+        "--images",
+        str(paths["inpaint_images"]),
+        "--unseen_mask_dir",
+        str(paths["unseen_masks"]),
+        "--unseen_mask_dilated_dir",
+        str(paths["unseen_masks_dilated"]),
+        "--reference_index",
+        str(int(spec["reference_index"])),
+        "--dilate_mask_kernel_size",
+        str(int(spec["dilate_mask_kernel_size"])),
+        "--dilate_mask_iter",
+        str(int(spec["dilate_mask_iter"])),
+        "--depth_align_min_val",
+        str(float(spec["depth_align_min_val"])),
+        "--depth_align_max_val",
+        str(float(spec["depth_align_max_val"])),
+        "--depth_align_percentile",
+        str(float(spec["depth_align_percentile"])),
+        "--finetune_iteration",
+        "-1",
+        "--skip_test",
+        "--skip_mesh",
+        "--skip_eval",
+    ]
+    if len(spec["target_id"]) > 1:
+        init_cmd.append("--keep_all_unseen_components")
+    run_cmd(init_cmd)
+
+
 def run_prepare_round(args: argparse.Namespace, workflow: dict[str, Any], round_index: int) -> None:
     spec = resolve_round_spec(workflow, round_index)
     paths = round_paths(args, workflow, spec, round_index)
@@ -317,7 +388,7 @@ def run_prepare_round(args: argparse.Namespace, workflow: dict[str, Any], round_
     removal_output_path = paths["workspace"] / "train" / "ours_0_object_removal"
     removal_renders = removal_render_dir(paths)
     list_images(removal_renders)
-    assert_not_source_images(args.source_path, removal_renders, "Initial inpaint image root")
+    assert_not_source_images(args.source_path, removal_renders, "Removal render root")
     run_cmd([
         args.python_bin,
         "utils/sam2_utils.py",
@@ -330,45 +401,9 @@ def run_prepare_round(args: argparse.Namespace, workflow: dict[str, Any], round_
         "--name_dir",
         str(image_dir),
     ])
+    prepare_unseen_masks_dilated(paths, spec)
 
-    init_cmd = [
-        args.python_bin,
-        "inpaint.py",
-        "-s",
-        str(Path(args.source_path).expanduser().resolve()),
-        "-m",
-        str(paths["workspace"]),
-        "--iteration",
-        "0",
-        "--images",
-        str(removal_renders),
-        "--unseen_mask_dir",
-        str(paths["unseen_masks"]),
-        "--unseen_mask_dilated_dir",
-        str(paths["unseen_masks_dilated"]),
-        "--reference_index",
-        str(int(spec["reference_index"])),
-        "--dilate_mask_kernel_size",
-        str(int(spec["dilate_mask_kernel_size"])),
-        "--dilate_mask_iter",
-        str(int(spec["dilate_mask_iter"])),
-        "--depth_align_min_val",
-        str(float(spec["depth_align_min_val"])),
-        "--depth_align_max_val",
-        str(float(spec["depth_align_max_val"])),
-        "--depth_align_percentile",
-        str(float(spec["depth_align_percentile"])),
-        "--finetune_iteration",
-        "-1",
-        "--skip_test",
-        "--skip_mesh",
-        "--skip_eval",
-    ]
-    if len(spec["target_id"]) > 1:
-        init_cmd.append("--keep_all_unseen_components")
-    run_cmd(init_cmd)
-
-    meta["status"] = "initial_inpaint_ready"
+    meta["status"] = "unseen_masks_ready"
     save_round_meta(paths, meta)
 
 
@@ -412,10 +447,27 @@ def run_leftrefill(args: argparse.Namespace, workflow: dict[str, Any], round_ind
     save_round_meta(paths, meta)
 
 
+def run_initialize_round(args: argparse.Namespace, workflow: dict[str, Any], round_index: int) -> None:
+    spec = resolve_round_spec(workflow, round_index)
+    paths = round_paths(args, workflow, spec, round_index)
+    meta = load_round_meta(paths, base_meta(args, round_index, spec, paths))
+    run_initial_inpaint(args, spec, paths)
+    meta["status"] = "initial_inpaint_ready"
+    meta["initial_inpaint_image_root"] = str(paths["inpaint_images"])
+    meta["initial_point_cloud_ply"] = str(paths["workspace"] / "point_cloud" / "iteration_object_inpaint_init" / "point_cloud.ply")
+    save_round_meta(paths, meta)
+
+
 def run_finalize_round(args: argparse.Namespace, workflow: dict[str, Any], round_index: int) -> None:
     spec = resolve_round_spec(workflow, round_index)
     paths = round_paths(args, workflow, spec, round_index)
     meta = load_round_meta(paths, base_meta(args, round_index, spec, paths))
+    init_ply = paths["workspace"] / "point_cloud" / "iteration_object_inpaint_init" / "point_cloud.ply"
+    if not init_ply.is_file():
+        raise FileNotFoundError(
+            f"Initial inpaint point cloud not found: {init_ply}. "
+            "Run the initialize-round stage after run-leftrefill before finalizing."
+        )
     final_cmd = [
         args.python_bin,
         "inpaint.py",
@@ -491,6 +543,8 @@ def main() -> None:
         run_prepare_round(args, workflow, args.round_index)
     elif args.command == "run-leftrefill":
         run_leftrefill(args, workflow, args.round_index)
+    elif args.command == "initialize-round":
+        run_initialize_round(args, workflow, args.round_index)
     elif args.command == "finalize-round":
         run_finalize_round(args, workflow, args.round_index)
     else:

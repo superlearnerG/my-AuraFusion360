@@ -153,6 +153,9 @@ class OptimizationParams(ParamGroup):
         self.renoise_start_iter = 30
         self.renoise_step = 1
         self.infer_iter = 1
+        self.depth_align_min_val = -1.0 # < 0 means use finite non-zero depth min
+        self.depth_align_max_val = 0.0 # > 0 overrides percentile, e.g. 30 for 360-USID issue #11
+        self.depth_align_percentile = 99.5 # 100 disables percentile clamp and uses raw max
         
         # For view selection
         self.view_selection = False

@@ -27,6 +27,9 @@ DEPTHS=""
 DEPTH_SCALE=0.0
 DEPTH_L1_WEIGHT_INIT=1.0
 DEPTH_L1_WEIGHT_FINAL=0.01
+DEPTH_ALIGN_MIN_VAL=-1.0
+DEPTH_ALIGN_MAX_VAL=0.0
+DEPTH_ALIGN_PERCENTILE=99.5
 
 write_time_consuming() {
   local end_time end_text elapsed hours minutes seconds elapsed_hms output_path
@@ -83,6 +86,9 @@ Options:
   --depth_scale V                 Raw-depth to COLMAP/Aura scale. Default: 0.0, estimate from COLMAP tracks
   --depth_l1_weight_init V        Initial inverse-depth loss weight. Default: 1.0
   --depth_l1_weight_final V       Final inverse-depth loss weight. Default: 0.01
+  --depth_align_min_val V         AGDD normalization min. Default: -1.0, use observed finite non-zero min
+  --depth_align_max_val V         AGDD normalization max. Default: 0.0, use percentile; set 30 for issue #11 behavior
+  --depth_align_percentile V      AGDD max percentile when max is unset. Default: 99.5; use 100 for raw max
   -h, --help                      Show this help
 
 Environment:
@@ -180,6 +186,18 @@ while [[ $# -gt 0 ]]; do
       DEPTH_L1_WEIGHT_FINAL="$2"
       shift 2
       ;;
+    --depth_align_min_val)
+      DEPTH_ALIGN_MIN_VAL="$2"
+      shift 2
+      ;;
+    --depth_align_max_val)
+      DEPTH_ALIGN_MAX_VAL="$2"
+      shift 2
+      ;;
+    --depth_align_percentile)
+      DEPTH_ALIGN_PERCENTILE="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -246,6 +264,9 @@ REMOVAL_THRESH="$REMOVAL_THRESH" \
 REFERENCE_INDEX="$REFERENCE_INDEX" \
 DILATE_MASK_KERNEL_SIZE="$DILATE_MASK_KERNEL_SIZE" \
 DILATE_MASK_ITER="$DILATE_MASK_ITER" \
+DEPTH_ALIGN_MIN_VAL="$DEPTH_ALIGN_MIN_VAL" \
+DEPTH_ALIGN_MAX_VAL="$DEPTH_ALIGN_MAX_VAL" \
+DEPTH_ALIGN_PERCENTILE="$DEPTH_ALIGN_PERCENTILE" \
 "$PYTHON_BIN" - <<'PY'
 import json
 import os
@@ -347,6 +368,9 @@ workflow = {
         "reference_index": int(os.environ["REFERENCE_INDEX"]),
         "dilate_mask_kernel_size": int(os.environ["DILATE_MASK_KERNEL_SIZE"]),
         "dilate_mask_iter": int(os.environ["DILATE_MASK_ITER"]),
+        "depth_align_min_val": float(os.environ["DEPTH_ALIGN_MIN_VAL"]),
+        "depth_align_max_val": float(os.environ["DEPTH_ALIGN_MAX_VAL"]),
+        "depth_align_percentile": float(os.environ["DEPTH_ALIGN_PERCENTILE"]),
         "skip_eval": True,
     },
     "rounds": [

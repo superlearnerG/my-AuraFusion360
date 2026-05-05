@@ -94,6 +94,9 @@ def resolve_round_spec(workflow: dict[str, Any], round_index: int) -> dict[str, 
     spec.setdefault("reference_index", -1)
     spec.setdefault("dilate_mask_kernel_size", 5)
     spec.setdefault("dilate_mask_iter", 3)
+    spec.setdefault("depth_align_min_val", -1.0)
+    spec.setdefault("depth_align_max_val", 0.0)
+    spec.setdefault("depth_align_percentile", 99.5)
     spec.setdefault("skip_eval", True)
     spec.setdefault("images", "images")
     spec.setdefault("sdedit_strength", workflow.get("sdedit", {}).get("strength", 0.85))
@@ -349,6 +352,12 @@ def run_prepare_round(args: argparse.Namespace, workflow: dict[str, Any], round_
         str(int(spec["dilate_mask_kernel_size"])),
         "--dilate_mask_iter",
         str(int(spec["dilate_mask_iter"])),
+        "--depth_align_min_val",
+        str(float(spec["depth_align_min_val"])),
+        "--depth_align_max_val",
+        str(float(spec["depth_align_max_val"])),
+        "--depth_align_percentile",
+        str(float(spec["depth_align_percentile"])),
         "--finetune_iteration",
         "-1",
         "--skip_test",

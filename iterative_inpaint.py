@@ -106,6 +106,7 @@ def resolve_round_spec(workflow: dict[str, Any], round_index: int) -> dict[str, 
     spec.setdefault("skip_eval", True)
     spec.setdefault("images", "images")
     spec.setdefault("lama_reference_strategy", workflow.get("lama_reference", {}).get("strategy", "max_mask"))
+    spec.setdefault("lama_reference_stem", workflow.get("lama_reference", {}).get("stem", ""))
     spec.setdefault("simple_lama_device", workflow.get("lama_reference", {}).get("device", "cuda"))
     spec.setdefault("sdedit_strength", workflow.get("sdedit", {}).get("strength", 0.85))
     spec.setdefault("sdedit_eta", workflow.get("sdedit", {}).get("eta", 1.0))
@@ -224,6 +225,13 @@ def _image_map_by_stem(paths: list[Path], label: str) -> dict[str, Path]:
     return by_stem
 
 
+def normalize_reference_stem(value: str) -> str:
+    text = str(value).strip()
+    if not text:
+        raise ValueError("lama_reference_stem must not be empty when using strategy=stem")
+    return Path(text).stem
+
+
 def load_binary_mask(mask_path: Path) -> Image.Image:
     with Image.open(mask_path) as mask_image:
         mask = np.array(mask_image.convert("L"))
@@ -274,6 +282,19 @@ def select_lama_reference(paths: dict[str, Path], spec: dict[str, Any]) -> dict[
     if strategy == "first":
         selected_stem = matched_stems[0]
         selected_area = int(np.array(load_binary_mask(mask_by_stem[selected_stem])).sum() // 255)
+    elif strategy == "stem":
+        selected_stem = normalize_reference_stem(str(spec.get("lama_reference_stem", "")))
+        if selected_stem not in source_by_stem:
+            raise FileNotFoundError(
+                f"Selected reference stem '{selected_stem}' has no train-split removal render in "
+                f"{source_root}. Pass a basename from the train split, not a held-out test view."
+            )
+        if selected_stem not in mask_by_stem:
+            raise FileNotFoundError(
+                f"Selected reference stem '{selected_stem}' has no unseen mask in "
+                f"{paths['unseen_masks_dilated']}"
+            )
+        selected_area = int(np.array(load_binary_mask(mask_by_stem[selected_stem])).sum() // 255)
     elif strategy == "index":
         reference_index = int(spec.get("reference_index", -1))
         try:
@@ -303,7 +324,7 @@ def select_lama_reference(paths: dict[str, Path], spec: dict[str, Any]) -> dict[
     else:
         raise ValueError(
             f"Unsupported lama_reference_strategy '{strategy}'. "
-            "Expected one of: max_mask, first, index."
+            "Expected one of: max_mask, first, index, stem."
         )
 
     return {

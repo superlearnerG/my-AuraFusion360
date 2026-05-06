@@ -538,7 +538,8 @@ if __name__ == "__main__":
     
     iteration = str(iteration) + "_object_removal"
     # inpaint
-    inpaint(dataset, iteration, pipe, args.skip_train, args.skip_test, opt, 0, args.voxel_down_size, args.finetune_iteration, reference_index, args.reference_stem)
+    reference_stem = getattr(args, "reference_stem", None)
+    inpaint(dataset, iteration, pipe, args.skip_train, args.skip_test, opt, 0, args.voxel_down_size, args.finetune_iteration, reference_index, reference_stem)
         
     # Evaluate the inpainted result
     if not args.skip_eval:

@@ -18,6 +18,7 @@ FINETUNE_ITERATION=5000
 REMOVAL_THRESH=0.7
 REFERENCE_INDEX=0
 LAMA_REFERENCE_STRATEGY=max_mask
+LAMA_REFERENCE_STEM=""
 SIMPLE_LAMA_DEVICE=cuda
 DILATE_MASK_KERNEL_SIZE=5
 DILATE_MASK_ITER=3
@@ -78,7 +79,8 @@ Options:
   --finetune_iteration N          Per-round final inpaint finetune iterations. Default: 5000
   --removal_thresh V              Gaussian removal threshold. Default: 0.7
   --reference_index N             Reference index used only when --lama_reference_strategy index. Default: 0
-  --lama_reference_strategy NAME   SimpleLaMa ref view strategy: max_mask, first, or index. Default: max_mask
+  --lama_reference_strategy NAME   SimpleLaMa ref view strategy: max_mask, first, index, or stem. Default: max_mask
+  --lama_reference_stem NAME       Exact reference basename/stem, e.g. 00067 or 00067.png. Implies strategy=stem.
   --simple_lama_device DEVICE     Device passed to simple_lama_inpainting.SimpleLama. Default: cuda
   --dilate_mask_kernel_size N     Unseen mask dilation kernel. Default: 5
   --dilate_mask_iter N            Unseen mask dilation iterations. Default: 3
@@ -152,6 +154,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --lama_reference_strategy)
       LAMA_REFERENCE_STRATEGY="$2"
+      shift 2
+      ;;
+    --lama_reference_stem)
+      LAMA_REFERENCE_STEM="$2"
       shift 2
       ;;
     --simple_lama_device)
@@ -243,14 +249,21 @@ fi
 if [[ -n "$REFERENCE_DIR" ]]; then
   echo "[$(date '+%F %T')] Warning: --reference_dir is ignored by iterative inpaint; per-round removal renders are used instead."
 fi
+if [[ -n "$LAMA_REFERENCE_STEM" ]]; then
+  LAMA_REFERENCE_STRATEGY=stem
+fi
 case "$LAMA_REFERENCE_STRATEGY" in
-  max_mask|first|index)
+  max_mask|first|index|stem)
     ;;
   *)
-    echo "--lama_reference_strategy must be one of: max_mask, first, index. Got: $LAMA_REFERENCE_STRATEGY" >&2
+    echo "--lama_reference_strategy must be one of: max_mask, first, index, stem. Got: $LAMA_REFERENCE_STRATEGY" >&2
     exit 1
     ;;
 esac
+if [[ "$LAMA_REFERENCE_STRATEGY" == "stem" && -z "$LAMA_REFERENCE_STEM" ]]; then
+  echo "--lama_reference_stem is required when --lama_reference_strategy stem is used" >&2
+  exit 1
+fi
 
 mkdir -p "$MODEL_PATH"
 mkdir -p "$(dirname "$WORKFLOW_CONFIG")"
@@ -283,6 +296,7 @@ FINETUNE_ITERATION="$FINETUNE_ITERATION" \
 REMOVAL_THRESH="$REMOVAL_THRESH" \
 REFERENCE_INDEX="$REFERENCE_INDEX" \
 LAMA_REFERENCE_STRATEGY="$LAMA_REFERENCE_STRATEGY" \
+LAMA_REFERENCE_STEM="$LAMA_REFERENCE_STEM" \
 SIMPLE_LAMA_DEVICE="$SIMPLE_LAMA_DEVICE" \
 DILATE_MASK_KERNEL_SIZE="$DILATE_MASK_KERNEL_SIZE" \
 DILATE_MASK_ITER="$DILATE_MASK_ITER" \
@@ -389,6 +403,7 @@ workflow = {
         "finetune_iteration": int(os.environ["FINETUNE_ITERATION"]),
         "reference_index": int(os.environ["REFERENCE_INDEX"]),
         "lama_reference_strategy": os.environ["LAMA_REFERENCE_STRATEGY"],
+        "lama_reference_stem": os.environ["LAMA_REFERENCE_STEM"],
         "simple_lama_device": os.environ["SIMPLE_LAMA_DEVICE"],
         "dilate_mask_kernel_size": int(os.environ["DILATE_MASK_KERNEL_SIZE"]),
         "dilate_mask_iter": int(os.environ["DILATE_MASK_ITER"]),

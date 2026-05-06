@@ -15,19 +15,21 @@ COMMON_ARGS=(
 )
 
 SCENE_CONFIGS=(
-  # "bear|128"
-  # "bonsai|128"
-  # "fruits|[48,30,67,86,105,123,142],[161,180,217,198,236]"
-  # "doppelherz|[30,105,180]"
-  # "toys|[30,105,180]"
-  # "figurines|[30,83,72,51,40,94,115,158,222,233],[62,105,169,180,126,142,201,212,244,190]"
-  # "scene_1_colmap|[12,25,38,51,63,76]"
-  # "scene_5_colmap|[12,25,38,51,63,76]"
-  # "scene_6_colmap|[12,25,38,51,63,76]"
-  # "bag|30"
-  "office_desk|[119,102,17],[34,51,68,85]"
-  "dining_table|[170,136,102,204],[119,187,85,153]"
-  "bedroom|[85,17,34],[68,153,102,136,51]"
+  # Format: "scene|target_ids|lama_reference_stem"
+  # Leave lama_reference_stem empty to use pipeline.sh default max_mask selection.
+  # "bear|128|00001"
+  # "bonsai|128|{lama_reference_stem}"
+  # "fruits|[48,30,67,86,105,123,142],[161,180,217,198,236]|{lama_reference_stem}"
+  # "doppelherz|[30,105,180]|{lama_reference_stem}"
+  # "toys|[30,105,180]|{lama_reference_stem}"
+  # "figurines|[30,83,72,51,40,94,115,158,222,233],[62,105,169,180,126,142,201,212,244,190]|{lama_reference_stem}"
+  # "scene_1_colmap|[12,25,38,51,63,76]|{lama_reference_stem}"
+  # "scene_5_colmap|[12,25,38,51,63,76]|{lama_reference_stem}"
+  # "scene_6_colmap|[12,25,38,51,63,76]|{lama_reference_stem}"
+  # "bag|30|{lama_reference_stem}"
+  "office_desk|[119,102,17],[34,51,68,85]|"
+  "dining_table|[170,136,102,204],[119,187,85,153]|"
+  "bedroom|[85,17,34],[68,153,102,136,51]|"
 )
 
 SELECTED_SCENES=()
@@ -42,11 +44,14 @@ Behavior:
   - By default, runs all predefined scenes in this file.
   - Repeat --scene to run only a subset.
   - Any other arguments are forwarded to pipeline.sh and can override defaults.
+  - SCENE_CONFIGS entries are scene|target_ids|lama_reference_stem. Leave the
+    final field empty to use pipeline.sh default max_mask reference selection.
 
 Examples:
   bash pipeline_wrapper.sh
   bash pipeline_wrapper.sh --scene bear --scene bonsai --skip_base_train
   bash pipeline_wrapper.sh --scene fruits --port 6021 --base_iteration 40000
+  bash pipeline_wrapper.sh --scene bear --lama_reference_stem 00067 --skip_base_train
 
 Environment:
   DATA_ROOT     Scene root. Default: ../../siga26/data
@@ -80,9 +85,14 @@ list_scene_names() {
 run_scene() {
   local scene_name="$1"
   local target_ids="$2"
+  local lama_reference_stem="${3:-}"
   local source_path="$DATA_ROOT/$scene_name"
   local model_path="$OUTPUT_ROOT/$scene_name/aurafusion360"
   local raw_mask_dir="$source_path/object_mask"
+  local reference_args=()
+  if [[ -n "$lama_reference_stem" ]]; then
+    reference_args+=(--lama_reference_stem "$lama_reference_stem")
+  fi
 
   echo "============================================================"
   echo "scene        : $scene_name"
@@ -90,6 +100,7 @@ run_scene() {
   echo "model_path   : $model_path"
   echo "raw_mask_dir : $raw_mask_dir"
   echo "target_ids   : $target_ids"
+  echo "lama_ref     : ${lama_reference_stem:-<max_mask>}"
   echo "============================================================"
 
   bash "$PIPELINE_SCRIPT" \
@@ -98,6 +109,7 @@ run_scene() {
     --raw_mask_dir "$raw_mask_dir" \
     --target_ids "$target_ids" \
     "${COMMON_ARGS[@]}" \
+    "${reference_args[@]}" \
     "${PASSTHROUGH_ARGS[@]}"
 }
 
@@ -132,8 +144,8 @@ cd "$SCRIPT_DIR"
 
 if [[ ${#SELECTED_SCENES[@]} -eq 0 ]]; then
   for config in "${SCENE_CONFIGS[@]}"; do
-    IFS='|' read -r scene_name target_ids <<< "$config"
-    run_scene "$scene_name" "$target_ids"
+    IFS='|' read -r scene_name target_ids lama_reference_stem <<< "$config"
+    run_scene "$scene_name" "$target_ids" "$lama_reference_stem"
   done
 else
   for scene_name in "${SELECTED_SCENES[@]}"; do
@@ -142,8 +154,8 @@ else
       echo "Available scenes: $(list_scene_names)" >&2
       exit 1
     }
-    IFS='|' read -r _ target_ids <<< "$config"
-    run_scene "$scene_name" "$target_ids"
+    IFS='|' read -r _ target_ids lama_reference_stem <<< "$config"
+    run_scene "$scene_name" "$target_ids" "$lama_reference_stem"
   done
 fi
 

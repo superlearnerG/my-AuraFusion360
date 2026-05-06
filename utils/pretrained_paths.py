@@ -62,5 +62,21 @@ def require_stable_diffusion_inpaint_checkpoint(min_bytes: int = 1024 * 1024) ->
     )
 
 
+def require_simple_lama_torchscript(min_bytes: int = 1024 * 1024) -> Path:
+    return require_pretrained_file_any(
+        (
+            ("big-lama", "big-lama.pt"),
+            ("torch", "hub", "checkpoints", "big-lama.pt"),
+        ),
+        min_bytes=min_bytes,
+    )
+
+
 def use_local_torch_home() -> None:
     os.environ.setdefault("TORCH_HOME", str(pretrained_path("torch")))
+
+
+def configure_pretrained_env(include_simple_lama: bool = False) -> None:
+    use_local_torch_home()
+    if include_simple_lama and "LAMA_MODEL" not in os.environ:
+        os.environ["LAMA_MODEL"] = str(require_simple_lama_torchscript())

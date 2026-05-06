@@ -17,6 +17,8 @@ FIT_MASK_ITERATIONS=2000
 FINETUNE_ITERATION=5000
 REMOVAL_THRESH=0.7
 REFERENCE_INDEX=0
+LAMA_REFERENCE_STRATEGY=max_mask
+SIMPLE_LAMA_DEVICE=cuda
 DILATE_MASK_KERNEL_SIZE=5
 DILATE_MASK_ITER=3
 PORT=6017
@@ -75,7 +77,9 @@ Options:
   --fit_mask_iterations N         Per-round _is_masked fitting iterations. Default: 2000
   --finetune_iteration N          Per-round final inpaint finetune iterations. Default: 5000
   --removal_thresh V              Gaussian removal threshold. Default: 0.7
-  --reference_index N             Removal-render index used as inpaint/LeftRefill reference. Default: 0
+  --reference_index N             Reference index used only when --lama_reference_strategy index. Default: 0
+  --lama_reference_strategy NAME   SimpleLaMa ref view strategy: max_mask, first, or index. Default: max_mask
+  --simple_lama_device DEVICE     Device passed to simple_lama_inpainting.SimpleLama. Default: cuda
   --dilate_mask_kernel_size N     Unseen mask dilation kernel. Default: 5
   --dilate_mask_iter N            Unseen mask dilation iterations. Default: 3
   --port N                        train.py GUI/network port. Default: 6017
@@ -144,6 +148,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --reference_index)
       REFERENCE_INDEX="$2"
+      shift 2
+      ;;
+    --lama_reference_strategy)
+      LAMA_REFERENCE_STRATEGY="$2"
+      shift 2
+      ;;
+    --simple_lama_device)
+      SIMPLE_LAMA_DEVICE="$2"
       shift 2
       ;;
     --dilate_mask_kernel_size)
@@ -231,6 +243,14 @@ fi
 if [[ -n "$REFERENCE_DIR" ]]; then
   echo "[$(date '+%F %T')] Warning: --reference_dir is ignored by iterative inpaint; per-round removal renders are used instead."
 fi
+case "$LAMA_REFERENCE_STRATEGY" in
+  max_mask|first|index)
+    ;;
+  *)
+    echo "--lama_reference_strategy must be one of: max_mask, first, index. Got: $LAMA_REFERENCE_STRATEGY" >&2
+    exit 1
+    ;;
+esac
 
 mkdir -p "$MODEL_PATH"
 mkdir -p "$(dirname "$WORKFLOW_CONFIG")"
@@ -262,6 +282,8 @@ FIT_MASK_ITERATIONS="$FIT_MASK_ITERATIONS" \
 FINETUNE_ITERATION="$FINETUNE_ITERATION" \
 REMOVAL_THRESH="$REMOVAL_THRESH" \
 REFERENCE_INDEX="$REFERENCE_INDEX" \
+LAMA_REFERENCE_STRATEGY="$LAMA_REFERENCE_STRATEGY" \
+SIMPLE_LAMA_DEVICE="$SIMPLE_LAMA_DEVICE" \
 DILATE_MASK_KERNEL_SIZE="$DILATE_MASK_KERNEL_SIZE" \
 DILATE_MASK_ITER="$DILATE_MASK_ITER" \
 DEPTH_ALIGN_MIN_VAL="$DEPTH_ALIGN_MIN_VAL" \
@@ -366,6 +388,8 @@ workflow = {
         "fit_mask_iterations": int(os.environ["FIT_MASK_ITERATIONS"]),
         "finetune_iteration": int(os.environ["FINETUNE_ITERATION"]),
         "reference_index": int(os.environ["REFERENCE_INDEX"]),
+        "lama_reference_strategy": os.environ["LAMA_REFERENCE_STRATEGY"],
+        "simple_lama_device": os.environ["SIMPLE_LAMA_DEVICE"],
         "dilate_mask_kernel_size": int(os.environ["DILATE_MASK_KERNEL_SIZE"]),
         "dilate_mask_iter": int(os.environ["DILATE_MASK_ITER"]),
         "depth_align_min_val": float(os.environ["DEPTH_ALIGN_MIN_VAL"]),

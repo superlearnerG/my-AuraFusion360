@@ -320,7 +320,10 @@ def LeftRefill(ref_img_path, source_root, ref_root, mask_root, output_root, stre
         source_img_np = np.array(source_img)
         result_img_np[mask_img_np == 0] = source_img_np[mask_img_np == 0]
         result_img = Image.fromarray(result_img_np)
-        result_img.save(os.path.join(output_root, ref_list[i]))
+        if Path(ref_list[i]).stem == Path(ref_img_path).stem:
+            ref_img.resize(source_img.size, resample=Image.Resampling.BICUBIC).save(os.path.join(output_root, ref_list[i]))
+        else:
+            result_img.save(os.path.join(output_root, ref_list[i]))
         
 
 if __name__ == "__main__":    

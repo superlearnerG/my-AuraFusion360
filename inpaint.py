@@ -137,16 +137,31 @@ def get_intrinsics2(H, W, fovx, fovy):
                      [ 0, fy, cy],
                      [ 0,  0,  1]])
 
-def inpaint_init(scene, opt, model_path, iteration, views, gaussians, pipeline, background, classifier, selected_obj_ids, cameras_extent, voxel_down_size, finetune_iteration, reference_index=None):
+
+def find_reference_view(views, reference_index=None, reference_stem=None):
+    if reference_stem:
+        reference_stem = Path(reference_stem).stem
+        for view in views:
+            if Path(str(view.image_name)).stem == reference_stem:
+                return view
+        available = ", ".join(Path(str(view.image_name)).stem for view in views[:10])
+        raise ValueError(
+            f"reference_stem '{reference_stem}' not found in training views. "
+            f"First available stems: {available}"
+        )
+    if reference_index is None:
+        raise ValueError("Shuold provide a reference index or reference stem")
+    return views[reference_index]
+
+
+def inpaint_init(scene, opt, model_path, iteration, views, gaussians, pipeline, background, classifier, selected_obj_ids, cameras_extent, voxel_down_size, finetune_iteration, reference_index=None, reference_stem=None):
     
     run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     tb_writer = SummaryWriter(os.path.join(model_path, "tensorboard", "inpaint_init", run_name))
     
 
     with torch.no_grad():
-        if reference_index is None:
-            raise ValueError("Shuold provide a reference index")
-        reference_view = views[reference_index]
+        reference_view = find_reference_view(views, reference_index=reference_index, reference_stem=reference_stem)
         
         print("reference view: ", reference_view.image_name)
         render_pkg = render(reference_view, gaussians, pipeline, background)
@@ -400,7 +415,7 @@ def inpaint_finetune(scene, opt, model_path, iteration, views, gaussians_removal
         
     
 
-def inpaint(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, opt : OptimizationParams, select_obj_id : int, voxel_down_size : float,  finetune_iteration: int, reference_index: int):
+def inpaint(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, opt : OptimizationParams, select_obj_id : int, voxel_down_size : float,  finetune_iteration: int, reference_index: int, reference_stem=None):
     # 1. load gaussian checkpoint
     dataset.stage = 'inpaint'
     gaussians = GaussianModel(dataset.sh_degree)
@@ -411,7 +426,7 @@ def inpaint(dataset : ModelParams, iteration : int, pipeline : PipelineParams, s
     # 2. unproject or finetuning
     is_initial_gs = None
     if finetune_iteration == -1:
-        gaussians, is_initial_gs = inpaint_init(scene, opt, dataset.model_path, scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, None, select_obj_id, scene.cameras_extent, voxel_down_size, finetune_iteration, reference_index)
+        gaussians, is_initial_gs = inpaint_init(scene, opt, dataset.model_path, scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, None, select_obj_id, scene.cameras_extent, voxel_down_size, finetune_iteration, reference_index, reference_stem)
     else:
         gaussians, is_initial_gs = inpaint_finetune(scene, opt, dataset.model_path, scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, None, select_obj_id, scene.cameras_extent, voxel_down_size, finetune_iteration, reference_index)
     
@@ -504,6 +519,7 @@ if __name__ == "__main__":
     parser.add_argument("--voxel_down_size", default=-1, type=float, help='voxel size for voxel downsampling')
     parser.add_argument("--finetune_iteration", default=-1, type=int, help='Inpaint: number of finetune iterations')
     parser.add_argument("--reference_index", default=0, type=int, help='Inpaint: reference view index. AURA daataset: -1, 360 dataset: 0')
+    parser.add_argument("--reference_stem", default=None, type=str, help='Inpaint: reference view image stem. Overrides reference_index when set.')
     parser.add_argument("--skip_eval", action="store_true", help="Skip evaluation after inpainting")
     parser.add_argument("--output_root", default="", type=str, help="Optional model/output root override for iterative workspaces")
     args = get_combined_args(parser)
@@ -522,7 +538,7 @@ if __name__ == "__main__":
     
     iteration = str(iteration) + "_object_removal"
     # inpaint
-    inpaint(dataset, iteration, pipe, args.skip_train, args.skip_test, opt, 0, args.voxel_down_size, args.finetune_iteration, reference_index)
+    inpaint(dataset, iteration, pipe, args.skip_train, args.skip_test, opt, 0, args.voxel_down_size, args.finetune_iteration, reference_index, args.reference_stem)
         
     # Evaluate the inpainted result
     if not args.skip_eval:
